@@ -1,21 +1,46 @@
-# CUDA development tools stay in the builder; the final image only needs runtime libraries.
-ARG CUDA_VERSION=12.8.1
-ARG IMAGE_DISTRO=ubuntu22.04
+# Use NVIDIA's RHEL 9 RPM repository on Rocky Linux; do not install a host driver.
+FROM rockylinux:9-minimal AS cuda-base
 
-FROM nvidia/cuda:${CUDA_VERSION}-devel-${IMAGE_DISTRO} AS builder
+ARG CUDA_VERSION=12.8
+
+RUN test "$(uname -m)" = x86_64 \
+    && microdnf install -y ca-certificates curl-minimal bash coreutils grep libstdc++ \
+    && printf '%s\n' "$CUDA_VERSION" | grep -Eq '^[0-9]+\.[0-9]+$' \
+    && curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
+         -o /etc/yum.repos.d/cuda-rhel9.repo \
+    && microdnf clean all
+
+ENV CUDA_HOME=/usr/local/cuda-${CUDA_VERSION}
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64 \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+FROM cuda-base AS builder
 
 ARG COMPUTE=75
 ARG NVCCFLAGS=""
+ARG GPU_BURN_REPOSITORY=https://github.com/wilicc/gpu-burn.git
+ARG GPU_BURN_REF=0d19c94dcb2e9b6858b7586a4c327674cd67113b
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends g++ make \
-    && rm -rf /var/lib/apt/lists/*
+RUN cuda_series="$(printf '%s' "$CUDA_VERSION" | tr . -)" \
+    && microdnf install -y gcc-c++ make git-core \
+         "cuda-nvcc-${cuda_series}" "cuda-cudart-devel-${cuda_series}" \
+         "cuda-driver-devel-${cuda_series}" "libcublas-devel-${cuda_series}" \
+    && microdnf clean all
 
 WORKDIR /build
-COPY vendor/gpu-burn/Makefile vendor/gpu-burn/compare.cu vendor/gpu-burn/gpu_burn-drv.cpp ./
-RUN make COMPUTE="${COMPUTE}" NVCCFLAGS="${NVCCFLAGS}"
+RUN git init . \
+    && git remote add origin "$GPU_BURN_REPOSITORY" \
+    && git fetch --depth 1 origin "$GPU_BURN_REF" \
+    && git checkout --detach FETCH_HEAD \
+    && git rev-parse HEAD > /build/UPSTREAM_COMMIT \
+    && make CUDAPATH="$CUDA_HOME" COMPUTE="$COMPUTE" NVCCFLAGS="$NVCCFLAGS"
 
-FROM nvidia/cuda:${CUDA_VERSION}-runtime-${IMAGE_DISTRO}
+FROM cuda-base AS runtime
+
+RUN cuda_series="$(printf '%s' "$CUDA_VERSION" | tr . -)" \
+    && microdnf install -y "cuda-cudart-${cuda_series}" "libcublas-${cuda_series}" \
+    && microdnf clean all
 
 LABEL org.opencontainers.image.title="rise-tool-gpu-burn" \
       org.opencontainers.image.description="Multi-GPU CUDA stress test" \
@@ -23,9 +48,8 @@ LABEL org.opencontainers.image.title="rise-tool-gpu-burn" \
 
 WORKDIR /app
 COPY --from=builder /build/gpu_burn /build/compare.fatbin ./
-COPY vendor/gpu-burn/LICENSE vendor/gpu-burn/UPSTREAM.md /usr/share/licenses/gpu-burn/
+COPY --from=builder /build/LICENSE /build/UPSTREAM_COMMIT /usr/share/licenses/gpu-burn/
 COPY --chmod=0755 bin/gpu-burn.sh /usr/local/bin/gpu-burn.sh
 
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENTRYPOINT ["/usr/local/bin/gpu-burn.sh"]
 CMD []

@@ -6,17 +6,20 @@
 
 ## 运行要求
 
-- Linux、Bash 4+、Docker Engine 和 Docker Compose v2.24+（支持 GPU device reservations）。
+- x86_64 Linux、Bash 4+、Docker Engine 和 Docker Compose v2.24+（支持 GPU device reservations）。
 - NVIDIA GPU、与所选 CUDA 版本兼容的主机驱动，以及已配置 Docker runtime 的
   [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)。
 - 主机无需安装 CUDA Toolkit，编译工具和 CUDA 库由容器镜像提供。
 
-默认镜像使用 CUDA 12.8.1 / Ubuntu 22.04，计算能力为 7.5。请根据显卡和驱动选择
+基础镜像使用 `rockylinux:9-minimal`，通过 NVIDIA 官方 RHEL 9 RPM 仓库安装 CUDA 12.8，
+默认计算能力为 7.5。请根据显卡和驱动选择
 `CUDA_VERSION` 与 `COMPUTE`；较老显卡可能需要较早的 CUDA 版本。
 开始前可使用 `nvidia-smi` 检查驱动，并验证容器能够访问 GPU：
 
 ```bash
-docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu22.04 nvidia-smi
+docker run --rm --gpus all \
+  -e NVIDIA_VISIBLE_DEVICES=all -e NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+  rockylinux:9-minimal nvidia-smi
 ```
 
 压力测试会持续占用 GPU 算力和显存。运行前确认散热、电源与当前 GPU 工作负载，
@@ -30,10 +33,14 @@ docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu22.04 nvidia-smi
 
 | 变量名称 | 含义 | 默认值 |
 | --- | --- | --- |
-| `CUDA_VERSION` | NVIDIA CUDA 镜像版本，需同时提供 devel/runtime 镜像 | `12.8.1` |
-| `IMAGE_DISTRO` | CUDA 镜像的 Ubuntu 发行版后缀，构建阶段需要 apt-get | `ubuntu22.04` |
+| `CUDA_VERSION` | CUDA RPM 系列，格式为主版本.次版本，需在 NVIDIA RHEL 9 x86_64 仓库中存在 | `12.8` |
 | `COMPUTE` | CUDA 计算能力，例如 `75`、`86`、`89`、`90` | `75` |
 | `NVCCFLAGS` | 附加 nvcc 编译参数 | 空 |
+| `GPU_BURN_REPOSITORY` | 构建时拉取的 Git 仓库，可设为兼容的镜像仓库地址 | `https://github.com/wilicc/gpu-burn.git` |
+| `GPU_BURN_REF` | Git 提交、标签或分支；建议固定完整提交 SHA | `0d19c94dcb2e9b6858b7586a4c327674cd67113b` |
+
+`CUDA_VERSION` 使用 RPM 系列编号，例如 `12.8`，不再接受原 CUDA 镜像的 `12.8.1`
+格式。构建会安装该系列当前可用的 RPM 包，并非锁定补丁版本；`IMAGE_DISTRO` 已移除。
 
 `COMPUTE` 可以显式设为空，再使用 `NVCCFLAGS` 的 `-gencode` 参数构建多个架构；
 请确保所选 CUDA 版本支持目标架构。例如：
@@ -79,11 +86,20 @@ COMPUTE= NVCCFLAGS='-gencode=arch=compute_86,code=sm_86 -gencode=arch=compute_90
 bash scripts/build.sh
 
 # 按显卡和驱动调整 CUDA 版本、计算能力。
-CUDA_VERSION=12.8.1 COMPUTE=86 bash scripts/build.sh
+CUDA_VERSION=12.8 COMPUTE=86 bash scripts/build.sh
+
+# 从指定 Git 提交构建；也可指定上游标签或分支。
+GPU_BURN_REF=0d19c94dcb2e9b6858b7586a4c327674cd67113b bash scripts/build.sh
 ```
 
-镜像名称为 `rise-tool-gpu-burn:v1.0.0`。Dockerfile 在 devel 镜像中编译，
-最终 runtime 镜像仅包含运行依赖、`gpu_burn`、`compare.fatbin`、启动脚本和许可证。
+镜像名称为 `rise-tool-gpu-burn:v1.0.0`。编译和运行阶段均基于 `rockylinux:9-minimal`。
+构建阶段使用 Git 浅拉取指定版本，安装 CUDA 编译器、开发库及 C++ 工具链；
+运行阶段仅安装 CUDA Runtime、cuBLAS 等运行依赖，并复制 `gpu_burn`、`compare.fatbin`、
+启动脚本、上游许可证及实际构建提交记录，不包含 Git 和编译工具链。
+容器内不安装 NVIDIA 驱动，驱动及 `nvidia-smi` 由主机的 NVIDIA Container Toolkit 注入。
+
+如果使用分支或可移动标签，Docker 的构建缓存不会自动感知远端更新；更新时请运行
+`docker compose build --no-cache`，或将 `GPU_BURN_REF` 改为新的完整提交 SHA 后重新构建。
 
 ### 2. 启动测试
 
@@ -161,14 +177,22 @@ docker compose -p rise-service-gpu-burn-1 \
 - `bin/gpu-burn.sh`：实例环境变量校验、参数转换和进程启动。
 - `scripts/`：沿用模板的 `build/start/close/rerun/clean/share` 脚本结构。
 - `envs/`：按标签管理实例配置；新增的本地 `.env` 文件默认被 Git 忽略。
-- `vendor/gpu-burn/`：固定版本的上游源码与 BSD-2-Clause 许可证。
+- `Dockerfile`：Rocky Linux / CUDA 多阶段构建，以及上游 Git 源码拉取。
 - `tests/smoke.sh`：无需 Docker/GPU 的脚本集成测试，使用替身验证命令与参数。
 
 ```bash
 bash tests/smoke.sh
 ```
 
-源码快照固定在上游提交 `0d19c94dcb2e9b6858b7586a4c327674cd67113b`，
-来源及更新说明见 [vendor/gpu-burn/UPSTREAM.md](vendor/gpu-burn/UPSTREAM.md)。
-构建不需要从 GitHub 拉取源码，但需要下载 CUDA 基础镜像和 Ubuntu 编译依赖。
-源码更新后应重新构建，并在 NVIDIA GPU 主机上验证设备枚举、短时测试、停止及最终结果。
+项目不再保存上游源码副本。构建时从 `GPU_BURN_REPOSITORY` 拉取 `GPU_BURN_REF`，
+默认固定上游提交 `0d19c94dcb2e9b6858b7586a4c327674cd67113b`。
+构建网络需要能访问 Git 仓库、Rocky Linux 软件源和 NVIDIA CUDA RPM 仓库。
+上游 BSD-2-Clause 许可证与实际提交 SHA 保存在镜像的 `/usr/share/licenses/gpu-burn/`：
+
+```bash
+docker run --rm --entrypoint cat rise-tool-gpu-burn:v1.0.0 \
+  /usr/share/licenses/gpu-burn/UPSTREAM_COMMIT
+```
+
+更新时修改 `GPU_BURN_REF` 后重新构建，并在 NVIDIA GPU 主机上验证设备枚举、短时测试、
+停止及最终结果。CUDA 系列改变时，也需确认主机驱动版本和目标显卡兼容。

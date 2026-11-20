@@ -3,4 +3,3 @@
 *.env text eol=lf
 *.yaml text eol=lf
 Dockerfile text eol=lf
-vendor/gpu-burn/* text eol=lf
