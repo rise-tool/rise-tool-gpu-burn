@@ -41,7 +41,7 @@ fi
 printf '<%s>' "$@" >> "$TEST_TRACE_PATH"
 printf '\n' >> "$TEST_TRACE_PATH"
 case "$*" in
-  *'config --images') printf 'rise-tool-gpu-burn:v1.0.0\n' ;;
+  *'config --images') printf 'rise-tool-gpu-burn:mt-bb-1-v1.0.0\n' ;;
   'image ls '*) printf 'fake-image-id\n' ;;
 esac
 exit "${TEST_DOCKER_EXIT_CODE:-0}"
@@ -84,43 +84,42 @@ printf 'PASS: entrypoint defaults, flags, validation and exit code\n'
 
 # Run from outside the repository to verify that all paths resolve from the scripts.
 compose_prefix="<compose><--project-directory><$PROJECT_ROOT_PATH><-f><$PROJECT_ROOT_PATH/compose.yaml><--env-file></dev/null>"
-instance_prefix="$compose_prefix<-p><rise-service-gpu-burn-1><--env-file><$PROJECT_ROOT_PATH/envs/rise-service-gpu-burn-1.env>"
+instance_prefix="$compose_prefix<-p><rise-service-gpu-burn-mt-bb-1><--env-file><$PROJECT_ROOT_PATH/envs/MT-BB-1.env>"
 : > "$TEST_TRACE_PATH"
-bash "$PROJECT_ROOT_PATH/scripts/build.sh"
-assert_trace "$compose_prefix<-p><rise-tool-gpu-burn><build>"
+bash "$PROJECT_ROOT_PATH/scripts/build.sh" --hostname MT-BB-1
+assert_trace "$instance_prefix<build>"
 : > "$TEST_TRACE_PATH"
-bash "$PROJECT_ROOT_PATH/scripts/start.sh" --label 1
+bash "$PROJECT_ROOT_PATH/scripts/start.sh" --hostname MT-BB-1
 assert_trace "$instance_prefix<up><-d><--no-build>"
 : > "$TEST_TRACE_PATH"
-bash "$PROJECT_ROOT_PATH/scripts/close.sh" --label 1
+bash "$PROJECT_ROOT_PATH/scripts/close.sh" --hostname MT-BB-1
 assert_trace "$instance_prefix<stop>"
 : > "$TEST_TRACE_PATH"
-bash "$PROJECT_ROOT_PATH/scripts/rerun.sh" --label 1
+bash "$PROJECT_ROOT_PATH/scripts/rerun.sh" --hostname MT-BB-1
 assert_trace "$instance_prefix<stop>"$'\n'"$instance_prefix<up><-d><--no-build>"
 : > "$TEST_TRACE_PATH"
-bash "$PROJECT_ROOT_PATH/scripts/start.sh" --label 2
-assert_trace "$compose_prefix<-p><rise-service-gpu-burn-2><--env-file><$PROJECT_ROOT_PATH/envs/rise-service-gpu-burn-2.env><up><-d><--no-build>"
+bash "$PROJECT_ROOT_PATH/scripts/start.sh" --hostname MT-BB-2
+assert_trace "$compose_prefix<-p><rise-service-gpu-burn-mt-bb-2><--env-file><$PROJECT_ROOT_PATH/envs/MT-BB-2.env><up><-d><--no-build>"
 
-for action in start close rerun; do
+for action in build start close rerun clean; do
   expect_failure bash "$PROJECT_ROOT_PATH/scripts/$action.sh"
-  expect_failure bash "$PROJECT_ROOT_PATH/scripts/$action.sh" --label
-  expect_failure bash "$PROJECT_ROOT_PATH/scripts/$action.sh" --label ../1
-  expect_failure bash "$PROJECT_ROOT_PATH/scripts/$action.sh" --label '1;echo bad'
-  expect_failure bash "$PROJECT_ROOT_PATH/scripts/$action.sh" --label 1 --label 2
-  expect_failure bash "$PROJECT_ROOT_PATH/scripts/$action.sh" --label missing
+  expect_failure bash "$PROJECT_ROOT_PATH/scripts/$action.sh" --hostname
+  expect_failure bash "$PROJECT_ROOT_PATH/scripts/$action.sh" --hostname ../1
+  expect_failure bash "$PROJECT_ROOT_PATH/scripts/$action.sh" --hostname '1;echo bad'
+  expect_failure bash "$PROJECT_ROOT_PATH/scripts/$action.sh" --hostname MT-BB-1 --hostname MT-BB-2
+  expect_failure bash "$PROJECT_ROOT_PATH/scripts/$action.sh" --hostname missing
   expect_failure bash "$PROJECT_ROOT_PATH/scripts/$action.sh" --unknown 1
 done
-expect_failure bash "$PROJECT_ROOT_PATH/scripts/build.sh" --label 1
-expect_failure bash "$PROJECT_ROOT_PATH/scripts/clean.sh" --label 1
+expect_failure bash "$PROJECT_ROOT_PATH/scripts/start.sh" --label 1
 
 : > "$TEST_TRACE_PATH"
-if TEST_DOCKER_EXIT_CODE=17 bash "$PROJECT_ROOT_PATH/scripts/start.sh" --label 1; then
+if TEST_DOCKER_EXIT_CODE=17 bash "$PROJECT_ROOT_PATH/scripts/start.sh" --hostname MT-BB-1; then
   fail 'start lost the Docker exit code'
 else
   [[ "$?" == 17 ]] || fail 'unexpected Docker exit code'
 fi
 : > "$TEST_TRACE_PATH"
-if TEST_DOCKER_EXIT_CODE=17 bash "$PROJECT_ROOT_PATH/scripts/rerun.sh" --label 1; then
+if TEST_DOCKER_EXIT_CODE=17 bash "$PROJECT_ROOT_PATH/scripts/rerun.sh" --hostname MT-BB-1; then
   fail 'rerun ignored a failed stop'
 else
   [[ "$?" == 17 ]] || fail 'unexpected Docker exit code'
@@ -129,12 +128,35 @@ assert_trace "$instance_prefix<stop>"
 printf 'PASS: instance selection, lifecycle commands and error propagation\n'
 
 : > "$TEST_TRACE_PATH"
-bash "$PROJECT_ROOT_PATH/scripts/clean.sh"
+bash "$PROJECT_ROOT_PATH/scripts/clean.sh" --hostname MT-BB-1
 trace="$(cat "$TEST_TRACE_PATH")"
 [[ "$trace" == *"$instance_prefix<down><--remove-orphans>"* ]] || fail 'cleanup missed instance 1'
-[[ "$trace" == *'<rise-service-gpu-burn-2>'*'<down><--remove-orphans>'* ]] || fail 'cleanup missed instance 2'
+[[ "$trace" != *'<rise-service-gpu-burn-mt-bb-2>'* ]] || fail 'cleanup touched another host'
 [[ "$trace" == *'<config><--images>'* ]] || fail 'cleanup did not resolve project images'
-[[ "$trace" == *'<image><ls><--quiet><--filter><reference=rise-tool-gpu-burn:v1.0.0>'* ]] || fail 'cleanup image query is not scoped'
-[[ "$trace" == *'<image><rm><rise-tool-gpu-burn:v1.0.0>' ]] || fail 'cleanup missed the project image'
+[[ "$trace" == *'<image><ls><--quiet><--filter><reference=rise-tool-gpu-burn:mt-bb-1-v1.0.0>'* ]] || fail 'cleanup image query is not scoped'
+[[ "$trace" == *'<image><rm><rise-tool-gpu-burn:mt-bb-1-v1.0.0>' ]] || fail 'cleanup missed the project image'
 [[ "$trace" != *'<prune>'* ]] || fail 'cleanup must not prune unrelated Docker resources'
-printf 'PASS: cleanup removes only configured instances and the project image\n'
+printf 'PASS: cleanup removes only the selected host and its image\n'
+
+for host_name in MT-BB-1 MT-BB-2 MT-MB-1 MT-MB-2; do
+  (
+    set -a
+    source "$PROJECT_ROOT_PATH/envs/$host_name.env"
+    set +a
+    case "$host_name" in
+      MT-BB-1|MT-BB-2) expected_compute=70; expected_args='<-m><90%><-tc><3600>' ;;
+      MT-MB-1) expected_compute=120; expected_args='<-m><90%><-i><0><-tc><3600>' ;;
+      MT-MB-2) expected_compute=86; expected_args='<-m><90%><-i><0><-tc><3600>' ;;
+    esac
+    [[ "$COMPUTE" == "$expected_compute" ]] || fail "wrong compute capability for $host_name"
+    [[ "$CUDA_VERSION" == 12.8 ]] || fail "wrong CUDA series for $host_name"
+    [[ "$IMAGE_TAG" == "${host_name,,}-v1.0.0" ]] || fail "wrong image tag for $host_name"
+    [[ "$CONTAINER_NAME" == "rise-service-gpu-burn-${host_name,,}" ]] || fail "wrong container name for $host_name"
+    bash "$PROJECT_ROOT_PATH/bin/gpu-burn.sh"
+    assert_trace "$expected_args"
+  )
+  : > "$TEST_TRACE_PATH"
+  bash "$PROJECT_ROOT_PATH/scripts/build.sh" --hostname "${host_name,,}"
+  assert_trace "$compose_prefix<-p><rise-service-gpu-burn-${host_name,,}><--env-file><$PROJECT_ROOT_PATH/envs/$host_name.env><build>"
+done
+printf 'PASS: all four hardware profiles and case-insensitive hostname selection\n'

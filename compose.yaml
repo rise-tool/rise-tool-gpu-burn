@@ -9,7 +9,7 @@ services:
         NVCCFLAGS: ${NVCCFLAGS:-}
         GPU_BURN_REPOSITORY: ${GPU_BURN_REPOSITORY:-https://github.com/wilicc/gpu-burn.git}
         GPU_BURN_REF: ${GPU_BURN_REF:-0d19c94dcb2e9b6858b7586a4c327674cd67113b}
-    image: rise-tool-gpu-burn:v1.0.0
+    image: rise-tool-gpu-burn:${IMAGE_TAG:-v1.0.0}
     container_name: ${CONTAINER_NAME:-rise-service-gpu-burn-default}
     # A stress test ends after the configured duration; do not restart it automatically.
     restart: "no"

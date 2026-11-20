@@ -5,7 +5,7 @@ ENVVARS_ROOT_PATH="${PROJECT_ROOT_PATH}/envs"
 COMPOSE_YAML_PATH="${PROJECT_ROOT_PATH}/compose.yaml"
 INSTANCE_NAME="rise-service-gpu-burn"
 ENV_FILE_PATH=""
-# Do not implicitly read a caller's .env file; builds and cleanup use known defaults.
+# Do not implicitly read a caller's .env file.
 COMPOSE_SHARE=(docker compose --project-directory "$PROJECT_ROOT_PATH" -f "$COMPOSE_YAML_PATH" --env-file /dev/null)
 
 private_throw_error() {
@@ -19,30 +19,30 @@ private_check_docker() {
 }
 
 private_parse_command_args() {
-  local label=""
+  local host_name=""
   while (($#)); do
     case "$1" in
-      --label)
-        [[ -z "$label" ]] || private_throw_error '参数 --label 不能重复！'
-        [[ -n "${2:-}" ]] || private_throw_error '参数 --label 不能为空！'
-        label="${2,,}"
-        [[ "$label" =~ ^[a-z0-9][a-z0-9_-]*$ ]] \
-          || private_throw_error '实例标签只支持字母、数字、下划线和连字符，且必须以字母或数字开头！'
+      --hostname)
+        [[ -z "$host_name" ]] || private_throw_error '参数 --hostname 不能重复！'
+        [[ -n "${2:-}" ]] || private_throw_error '参数 --hostname 不能为空！'
+        host_name="${2^^}"
+        [[ ${#host_name} -le 63 && "$host_name" =~ ^[A-Z0-9]([A-Z0-9-]*[A-Z0-9])?$ ]] \
+          || private_throw_error '主机名最多 63 个字符，仅支持字母、数字和连字符，首尾须为字母或数字！'
         shift 2
         ;;
       *) private_throw_error "参数 $1 不支持！" ;;
     esac
   done
-  [[ -n "$label" ]] || private_throw_error '请通过 --label 指定实例标签！'
-  INSTANCE_NAME="rise-service-gpu-burn-${label}"
-  ENV_FILE_PATH="${ENVVARS_ROOT_PATH}/${INSTANCE_NAME}.env"
+  [[ -n "$host_name" ]] || private_throw_error '请通过 --hostname 指定主机名！'
+  INSTANCE_NAME="rise-service-gpu-burn-${host_name,,}"
+  ENV_FILE_PATH="${ENVVARS_ROOT_PATH}/${host_name}.env"
   [[ -f "$ENV_FILE_PATH" ]] || private_throw_error "文件 $ENV_FILE_PATH 不存在！"
 }
 
 public_compose_build() {
-  (($# == 0)) || private_throw_error '构建脚本不接受命令参数，请使用环境变量配置构建！'
+  private_parse_command_args "$@"
   private_check_docker
-  "${COMPOSE_SHARE[@]}" -p rise-tool-gpu-burn build
+  "${COMPOSE_SHARE[@]}" -p "$INSTANCE_NAME" --env-file "$ENV_FILE_PATH" build
 }
 
 private_compose_start() {
@@ -72,18 +72,9 @@ public_compose_rerun() {
   private_compose_start
 }
 
-private_compose_clean_instances() {
-  local env_file_path instance_name
-  for env_file_path in "$ENVVARS_ROOT_PATH"/rise-service-gpu-burn-*.env; do
-    [[ -f "$env_file_path" ]] || continue
-    instance_name="$(basename "$env_file_path" .env)"
-    "${COMPOSE_SHARE[@]}" -p "$instance_name" --env-file "$env_file_path" down --remove-orphans
-  done
-}
-
 private_compose_clean_images() {
   local image_list image_name image_info
-  image_list="$("${COMPOSE_SHARE[@]}" -p rise-tool-gpu-burn config --images | sort -u)" \
+  image_list="$("${COMPOSE_SHARE[@]}" -p "$INSTANCE_NAME" --env-file "$ENV_FILE_PATH" config --images | sort -u)" \
     || private_throw_error '获取 Docker 镜像列表失败！'
   while IFS= read -r image_name; do
     [[ -n "$image_name" ]] || continue
@@ -95,8 +86,8 @@ private_compose_clean_images() {
 }
 
 public_compose_clean() {
-  (($# == 0)) || private_throw_error '清理脚本不接受命令参数！'
+  private_parse_command_args "$@"
   private_check_docker
-  private_compose_clean_instances
+  "${COMPOSE_SHARE[@]}" -p "$INSTANCE_NAME" --env-file "$ENV_FILE_PATH" down --remove-orphans
   private_compose_clean_images
 }

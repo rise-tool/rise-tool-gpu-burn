@@ -1,10 +1,12 @@
 .reference/
 *.log
 
-# Local instance configuration (the two examples are versioned).
+# Local instance configuration (the supplied profiles are versioned).
 envs/*.env
-!envs/rise-service-gpu-burn-1.env
-!envs/rise-service-gpu-burn-2.env
+!envs/MT-BB-1.env
+!envs/MT-BB-2.env
+!envs/MT-MB-1.env
+!envs/MT-MB-2.env
 
 # CUDA build outputs.
 *.o
