@@ -1,0 +1,30 @@
+services:
+  rise-tool-gpu-burn:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        CUDA_VERSION: ${CUDA_VERSION:-12.8.1}
+        IMAGE_DISTRO: ${IMAGE_DISTRO:-ubuntu22.04}
+        COMPUTE: ${COMPUTE-75}
+        NVCCFLAGS: ${NVCCFLAGS:-}
+    image: rise-tool-gpu-burn:v1.0.0
+    container_name: ${CONTAINER_NAME:-rise-service-gpu-burn-default}
+    # A stress test ends after the configured duration; do not restart it automatically.
+    restart: "no"
+    init: true
+    stop_grace_period: 60s
+    environment:
+      GPU_BURN_DURATION: ${GPU_BURN_DURATION:-60}
+      GPU_BURN_MEMORY: ${GPU_BURN_MEMORY:-90%}
+      GPU_BURN_GPU_INDEX: ${GPU_BURN_GPU_INDEX:-}
+      GPU_BURN_DOUBLES: ${GPU_BURN_DOUBLES:-false}
+      GPU_BURN_TENSOR_CORES: ${GPU_BURN_TENSOR_CORES:-false}
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

@@ -1,0 +1,11 @@
+**
+!Dockerfile
+!bin/
+!bin/gpu-burn.sh
+!vendor/
+!vendor/gpu-burn/
+!vendor/gpu-burn/Makefile
+!vendor/gpu-burn/compare.cu
+!vendor/gpu-burn/gpu_burn-drv.cpp
+!vendor/gpu-burn/LICENSE
+!vendor/gpu-burn/UPSTREAM.md
