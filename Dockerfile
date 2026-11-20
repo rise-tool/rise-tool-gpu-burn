@@ -3,8 +3,9 @@ FROM rockylinux:9-minimal AS cuda-base
 
 ARG CUDA_VERSION=12.8
 
+# Rocky Minimal already supplies curl and coreutils-single; keep those package variants.
 RUN test "$(uname -m)" = x86_64 \
-    && microdnf install -y ca-certificates curl-minimal bash coreutils grep libstdc++ \
+    && microdnf install -y ca-certificates bash grep libstdc++ \
     && printf '%s\n' "$CUDA_VERSION" | grep -Eq '^[0-9]+\.[0-9]+$' \
     && curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64/cuda-rhel9.repo \
          -o /etc/yum.repos.d/cuda-rhel9.repo \
